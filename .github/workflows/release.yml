@@ -2,9 +2,12 @@
 name: Release images
 
 'on':
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Pull request number to merge after a successful release run
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -19,11 +22,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect image changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          base: main
+          ref: ${{ github.ref }}
           filters: |
             base:
               - 'Containerfiles/Containerfile.base'
@@ -224,3 +231,64 @@ jobs:
           sudo podman pull "${PERSONAL_REMOTE_LATEST}"
           sudo podman tag "${PERSONAL_REMOTE_LATEST}" "${PERSONAL_REMOTE_SHA}"
           sudo podman push "${PERSONAL_REMOTE_SHA}"
+
+  merge-pr:
+    needs:
+      - build-base
+      - build-server
+      - build-personal
+      - changes
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Merge pull request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prInput = context.payload.inputs['pr-number'];
+            const prNumber = Number.parseInt(prInput, 10);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid pull request number provided: '${prInput}'.`);
+              return;
+            }
+            const prResponse = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const pr = prResponse.data;
+            if (pr.state !== 'open') {
+              core.setFailed(`Pull request #${prNumber} is not open (state: ${pr.state}).`);
+              return;
+            }
+            if (pr.draft) {
+              core.setFailed(`Pull request #${prNumber} is marked as draft.`);
+              return;
+            }
+            if (pr.base.ref !== 'main') {
+              core.setFailed(`Pull request #${prNumber} targets '${pr.base.ref}' instead of 'main'.`);
+              return;
+            }
+            if (pr.head.sha !== process.env.GITHUB_SHA) {
+              core.setFailed(
+                `Pull request head SHA ${pr.head.sha} does not match workflow commit ${process.env.GITHUB_SHA}.`
+              );
+              return;
+            }
+            if (pr.mergeable === false || pr.mergeable_state !== 'clean') {
+              core.setFailed(
+                `Pull request #${prNumber} is not mergeable (state: ${pr.mergeable_state ?? 'unknown'}).`
+              );
+              return;
+            }
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'merge',
+            });
+            core.info(`Pull request #${prNumber} merged successfully.`);
