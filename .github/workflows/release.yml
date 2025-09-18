@@ -6,14 +6,118 @@ name: Release images
     inputs:
       pr-number:
         description: Pull request number to merge after a successful release run
-        required: true
+        required: false
         type: string
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  context:
+    runs-on: ubuntu-latest
+    outputs:
+      event-name: ${{ steps.info.outputs.event_name }}
+      pr-number: ${{ steps.resolve.outputs.pr_number }}
+    steps:
+      - name: Capture event details
+        id: info
+        run: echo "event_name=${GITHUB_EVENT_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve pull request number
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const eventName = context.eventName;
+            let prNumber;
+
+            if (eventName === 'pull_request_target') {
+              prNumber = context.payload.pull_request?.number;
+            } else if (eventName === 'workflow_dispatch') {
+              const manualInput = context.payload?.inputs?.['pr-number']?.trim();
+
+              if (manualInput) {
+                const parsed = Number.parseInt(manualInput, 10);
+                if (!Number.isInteger(parsed) || parsed <= 0) {
+                  core.setFailed(
+                    `Invalid pr-number input provided: '${manualInput}'.`,
+                  );
+                  return;
+                }
+                prNumber = parsed;
+              } else {
+                const ref = context.ref ?? '';
+                const branchPrefix = 'refs/heads/';
+
+                if (!ref.startsWith(branchPrefix)) {
+                  core.setFailed(
+                    `Unable to detect branch from ref '${ref}'. ` +
+                      'Provide pr-number manually when dispatching the workflow.',
+                  );
+                  return;
+                }
+
+                const branch = ref.slice(branchPrefix.length);
+                const prs = await github.paginate(
+                  github.rest.pulls.list,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    head: `${context.repo.owner}:${branch}`,
+                    state: 'open',
+                  },
+                );
+
+                if (prs.length === 1) {
+                  prNumber = prs[0].number;
+                } else if (prs.length === 0) {
+                  core.setFailed(
+                    `No open pull requests found for branch '${branch}'. ` +
+                      'Provide pr-number manually when dispatching the workflow.',
+                  );
+                  return;
+                } else {
+                  const prNumbers = prs.map((pr) => `#${pr.number}`).join(', ');
+                  core.setFailed(
+                    `Multiple open pull requests (${prNumbers}) found for branch ` +
+                      `'${branch}'. Provide pr-number manually when ` +
+                      'dispatching the workflow.',
+                  );
+                  return;
+                }
+              }
+            } else {
+              core.setFailed(`Unsupported event '${eventName}' for this workflow.`);
+              return;
+            }
+
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed('Unable to determine a valid pull request number.');
+              return;
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+
+      - name: Provide release instructions
+        if: steps.info.outputs.event_name != 'workflow_dispatch'
+        run: |
+          {
+            echo "Release workflow triggered for pull request checks."
+            echo "Run the manual dispatch to build images and merge the PR."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   changes:
+    needs: context
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       base: ${{ steps.filter.outputs.base }}
@@ -30,7 +134,7 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           base: main
-          ref: ${{ github.ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filters: |
             base:
               - 'Containerfiles/Containerfile.base'
@@ -43,7 +147,10 @@ jobs:
               - 'files/personal/**'
 
   build-base:
-    needs: changes
+    needs:
+      - context
+      - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,8 +224,10 @@ jobs:
 
   build-server:
     needs:
+      - context
       - build-base
       - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -189,8 +298,10 @@ jobs:
 
   build-personal:
     needs:
+      - context
       - build-base
       - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -261,28 +372,49 @@ jobs:
 
   merge-pr:
     needs:
+      - context
       - build-base
       - build-server
       - build-personal
       - changes
-    if: ${{ success() }}
+    if: needs.context.outputs.event-name == 'workflow_dispatch' && success()
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+    env:
+      PR_NUMBER: ${{ needs.context.outputs['pr-number'] }}
     steps:
       - name: Merge pull request
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prInput = context.payload.inputs['pr-number'];
-            const prNumber = Number.parseInt(prInput, 10);
+            const eventName = context.eventName;
+            let prNumber;
 
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              const invalidNumberMessage =
-                `Invalid pull request number provided: '${prInput}'.`;
-              core.setFailed(invalidNumberMessage);
+            if (eventName === 'pull_request_target') {
+              prNumber = context.payload.pull_request?.number;
+            } else if (eventName === 'workflow_dispatch') {
+              const envValue = process.env.PR_NUMBER ?? '';
+              const trimmedValue = envValue.trim();
+
+              if (!trimmedValue) {
+                core.setFailed('Pull request number is not available.');
+                return;
+              }
+
+              const parsed = Number.parseInt(trimmedValue, 10);
+              if (!Number.isInteger(parsed) || parsed <= 0) {
+                core.setFailed(
+                  `Invalid pull request number provided: '${trimmedValue}'.`,
+                );
+                return;
+              }
+
+              prNumber = parsed;
+            } else {
+              core.setFailed(`Unsupported event '${eventName}'.`);
               return;
             }
 

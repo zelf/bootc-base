@@ -77,11 +77,13 @@
 - `.github/workflows/ci.yml` triggers on pull requests to `main`, installs
   tooling, runs the lint script, builds the base image, and then builds the
   server and personal variants in parallel using the uploaded base artifact.
-- `.github/workflows/release.yml` is a manual `workflow_dispatch` requiring the
-  pull-request number. It builds and pushes the base image first, then runs the
-  server and personal jobs in parallel. When no Containerfile changes are
-  detected the workflow reuses the existing GHCR image tags. Successful runs
-  automatically merge the referenced pull request into `main`.
+- `.github/workflows/release.yml` surfaces as a PR check via
+  `pull_request_target` but only builds on a manual `workflow_dispatch`. The
+  dispatch auto-detects the pull request number from the branch (or accepts an
+  override) before building/pushing the base image, then running the server and
+  personal jobs in parallel. When no Containerfile changes are detected the
+  workflow reuses the existing GHCR image tags. Successful runs automatically
+  merge the resolved pull request into `main`.
 
 ### Publishing
 - Release builds push commit-SHA and `latest` tags for each image to

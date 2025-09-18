@@ -83,9 +83,12 @@ podman build --build-arg BASE_IMAGE=ghcr.io/zelf/bootc-base:latest \
 
 - Pull requests targeting `main` run `scripts/lint.sh` and `scripts/test.sh`
   via GitHub Actions (see `.github/workflows/ci.yml`).
-- Merges to `main` trigger `.github/workflows/release.yml`, building the three
-  images and publishing `latest` and commit-SHA tags to `ghcr.io` under the
-  repository owner namespace.
+- The release workflow (`.github/workflows/release.yml`) appears in the PR
+  checks list via `pull_request_target`, but it only builds when a maintainer
+  manually dispatches it. Manual runs auto-detect the associated pull request,
+  build/push the base image first, then fan out to the server and personal
+  variants before merging the PR on success. Existing GHCR tags are reused if
+  the corresponding Containerfiles stay untouched.
 
 ## Operational notes & hardening follow-ups
 
