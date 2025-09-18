@@ -1,6 +1,7 @@
+---
 name: Release images
 
-on:
+'on':
   push:
     branches:
       - main
@@ -31,15 +32,23 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
+            -u "${{ github.actor }}" --password-stdin
 
       - name: Prepare image tags
         id: prepare
         run: |
-          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          echo "owner=${OWNER}" >> "${GITHUB_OUTPUT}"
-          echo "base_sha=${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "base_latest=${REGISTRY}/${OWNER}/bootc-base:latest" >> "${GITHUB_OUTPUT}"
+          OWNER_INPUT="${GITHUB_REPOSITORY_OWNER}"
+          OWNER="$(
+            echo "${OWNER_INPUT}" | tr '[:upper:]' '[:lower:]'
+          )"
+          BASE_SHA="${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}"
+          BASE_LATEST="${REGISTRY}/${OWNER}/bootc-base:latest"
+          {
+            echo "owner=${OWNER}"
+            echo "base_sha=${BASE_SHA}"
+            echo "base_latest=${BASE_LATEST}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Build and push base image
         run: |
@@ -48,7 +57,11 @@ jobs:
           BASE_LOCAL_LATEST="localhost/bootc-base:latest"
           BASE_REMOTE_SHA="${{ steps.prepare.outputs.base_sha }}"
           BASE_REMOTE_LATEST="${{ steps.prepare.outputs.base_latest }}"
-          sudo podman build --pull=always --tag "${BASE_LOCAL_SHA}" -f Containerfiles/Containerfile.base .
+          sudo podman build \
+            --pull=always \
+            --tag "${BASE_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.base \
+            .
           sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_LOCAL_LATEST}"
           sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_SHA}"
           sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_LATEST}"
@@ -74,7 +87,8 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
+            -u "${{ github.actor }}" --password-stdin
 
       - name: Pull base image
         run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
@@ -118,7 +132,8 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
+            -u "${{ github.actor }}" --password-stdin
 
       - name: Pull base image
         run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"

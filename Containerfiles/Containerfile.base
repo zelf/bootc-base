@@ -20,8 +20,9 @@ RUN --mount=type=tmpfs,target=/var/cache/dnf \
         firewalld \
     && dnf5 clean all
 
-RUN systemctl enable firewalld \
-    && systemctl enable bootc-fetch-apply-updates.timer \
-    && systemctl disable tailscaled || true
+RUN set -eu; \
+    systemctl enable firewalld; \
+    systemctl enable bootc-fetch-apply-updates.timer; \
+    systemctl disable tailscaled || true
 
 # Keep SELinux enforcing unless explicitly changed downstream.
