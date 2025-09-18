@@ -1,0 +1,9 @@
+[sshd]
+enabled = true
+port    = ssh
+backend = systemd
+dbfile = /var/lib/fail2ban/fail2ban.sqlite3
+action = %(action_)s
+findtime = 15m
+bantime = 1h
+maxretry = 5

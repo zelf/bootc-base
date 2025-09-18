@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>bootc-server</short>
+  <description>Strict zone for bootc server workloads</description>
+  <service name="ssh"/>
+  <icmp-block-inversion enable="yes"/>
+  <forward>no</forward>
+</zone>

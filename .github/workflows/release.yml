@@ -1,0 +1,66 @@
+name: Release images
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push images
+        env:
+          CONTAINER_TOOL: podman
+        run: |
+          set -euo pipefail
+          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          BASE_LOCAL=localhost/bootc-base:latest
+          SERVER_LOCAL=localhost/bootc-server:latest
+          PERSONAL_LOCAL=localhost/bootc-personal:latest
+
+          sudo podman build --pull=always --tag "${BASE_LOCAL}" -f Containerfiles/Containerfile.base .
+          sudo podman tag "${BASE_LOCAL}" bootc-base:latest
+
+          sudo podman build --build-arg BASE_IMAGE=bootc-base:latest --tag "${SERVER_LOCAL}" -f Containerfiles/Containerfile.server .
+          sudo podman build --build-arg BASE_IMAGE=bootc-base:latest --tag "${PERSONAL_LOCAL}" -f Containerfiles/Containerfile.personal .
+
+          BASE_LATEST="${REGISTRY}/${OWNER}/bootc-base:latest"
+          BASE_SHA="${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}"
+          SERVER_LATEST="${REGISTRY}/${OWNER}/bootc-server:latest"
+          SERVER_SHA="${REGISTRY}/${OWNER}/bootc-server:${GITHUB_SHA}"
+          PERSONAL_LATEST="${REGISTRY}/${OWNER}/bootc-personal:latest"
+          PERSONAL_SHA="${REGISTRY}/${OWNER}/bootc-personal:${GITHUB_SHA}"
+
+          sudo podman tag "${BASE_LOCAL}" "${BASE_LATEST}"
+          sudo podman tag "${BASE_LOCAL}" "${BASE_SHA}"
+          sudo podman tag "${SERVER_LOCAL}" "${SERVER_LATEST}"
+          sudo podman tag "${SERVER_LOCAL}" "${SERVER_SHA}"
+          sudo podman tag "${PERSONAL_LOCAL}" "${PERSONAL_LATEST}"
+          sudo podman tag "${PERSONAL_LOCAL}" "${PERSONAL_SHA}"
+
+          sudo podman push "${BASE_LATEST}"
+          sudo podman push "${BASE_SHA}"
+          sudo podman push "${SERVER_LATEST}"
+          sudo podman push "${SERVER_SHA}"
+          sudo podman push "${PERSONAL_LATEST}"
+          sudo podman push "${PERSONAL_SHA}"

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman shellcheck yamllint uidmap
+
+      - name: Lint
+        env:
+          CONTAINER_TOOL: podman
+        run: sudo -E scripts/lint.sh
+
+      - name: Test builds
+        env:
+          CONTAINER_TOOL: podman
+        run: sudo -E scripts/test.sh

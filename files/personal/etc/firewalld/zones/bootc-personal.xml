@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>bootc-personal</short>
+  <description>Personal device zone allowing trusted local services</description>
+  <service name="mdns"/>
+  <service name="dhcpv6-client"/>
+  <service name="ipp-client"/>
+  <forward>no</forward>
+</zone>
