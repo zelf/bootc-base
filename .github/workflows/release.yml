@@ -1,0 +1,48 @@
+name: Release images
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPOSITORY: ${{ github.repository_owner }}/bootc-base
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Login to GHCR
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          if [[ -z "$GHCR_USERNAME" || -z "$GHCR_TOKEN" ]]; then
+            echo "GHCR credentials are required" >&2
+            exit 1
+          fi
+          echo "$GHCR_TOKEN" | sudo podman login "${REGISTRY}" -u "$GHCR_USERNAME" --password-stdin
+      - name: Build base image
+        run: |
+          sudo podman build --security-opt label=disable -t localhost/bootc-base:base -f Containerfiles/Containerfile.base .
+          sudo podman tag localhost/bootc-base:base "${REGISTRY}/${IMAGE_REPOSITORY}:base"
+      - name: Build server image
+        run: |
+          sudo podman build --security-opt label=disable --build-arg BASE_IMAGE=localhost/bootc-base:base -t localhost/bootc-base:server -f Containerfiles/Containerfile.server .
+          sudo podman tag localhost/bootc-base:server "${REGISTRY}/${IMAGE_REPOSITORY}:server"
+      - name: Build personal image
+        run: |
+          sudo podman build --security-opt label=disable --build-arg BASE_IMAGE=localhost/bootc-base:base -t localhost/bootc-base:personal -f Containerfiles/Containerfile.personal .
+          sudo podman tag localhost/bootc-base:personal "${REGISTRY}/${IMAGE_REPOSITORY}:personal"
+      - name: Push images
+        run: |
+          sudo podman push "${REGISTRY}/${IMAGE_REPOSITORY}:base"
+          sudo podman push "${REGISTRY}/${IMAGE_REPOSITORY}:server"
+          sudo podman push "${REGISTRY}/${IMAGE_REPOSITORY}:personal"
