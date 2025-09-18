@@ -51,7 +51,7 @@ jobs:
         run: sudo podman save bootc-base:ci -o bootc-base.tar
 
       - name: Upload base image artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bootc-base-image
           path: bootc-base.tar
@@ -72,9 +72,10 @@ jobs:
           sudo apt-get install -y podman uidmap
 
       - name: Download base image artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: bootc-base-image
+          path: .
 
       - name: Load base image
         run: sudo podman load -i bootc-base.tar
@@ -102,9 +103,10 @@ jobs:
           sudo apt-get install -y podman uidmap
 
       - name: Download base image artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: bootc-base-image
+          path: .
 
       - name: Load base image
         run: sudo podman load -i bootc-base.tar
