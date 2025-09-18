@@ -23,7 +23,6 @@
   - `tailscale`
   - `firewalld`
 - Swap: `nano-default-editor` `vim-default-editor`
-- Manage all package changes with `dnf5` during image builds.
 
 ### Services
 - `firewalld` enabled and active
@@ -79,12 +78,6 @@
 
 ### Build
 ```bash
-podman build -t <registry>/<namespace>/bootc:base -f Containerfiles/Containerfile.base
-podman build -t <registry>/<namespace>/bootc:server -f Containerfiles/Containerfile.server
-podman build -t <registry>/<namespace>/bootc:personal -f Containerfiles/Containerfile.personal
-```
-
-### CI expectations
-
-- Pull requests must run the lint (`scripts/lint.sh`) and test (`scripts/test.sh`) scripts via GitHub Actions.
-- Image publishing occurs only from merges to `main` that trigger the release workflow pushing to GHCR.
+podman build -t <registry>/<namespace>/bootc:base -f Containerfile.base
+podman build -t <registry>/<namespace>/bootc:server -f Containerfile.server
+podman build -t <registry>/<namespace>/bootc:personal -f Containerfile.personal

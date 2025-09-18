@@ -1,4 +1,0 @@
-[sshd]
-enabled = true
-mode    = aggressive
-port    = ssh

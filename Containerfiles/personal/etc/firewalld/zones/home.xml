@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<zone>
-  <short>Personal</short>
-  <description>Home-friendly firewall defaults while remaining restrictive.</description>
-  <service name="mdns"/>
-  <service name="ssh"/>
-  <port protocol="udp" port="41641"/>
-</zone>
