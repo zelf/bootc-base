@@ -2,102 +2,114 @@
 
 ## Base
 
-- **Distro:** Fedora 42 (container base)
-- **Image type:** OCI container
-- **Registry:** `zelf/bootc-base`
-- **Update policy:** Automatic via bootc + quadlet units
-- **Rollback:** Supported by bootc mechanism
-- **User:** `zelf`
-- **SSH keys:** placeholder
-- **Partitioning:** custom hardened layout (to be detailed)
+- **Upstream base:** `quay.io/fedora/fedora-bootc:42`
+- **Image type:** OCI bootable container
+- **Registry:** `ghcr.io/<owner>/bootc-*` (owner resolved from the GitHub repository)
+- **Update policy:** Automatic via `bootc-fetch-apply-updates.timer`
+- **Rollback:** Supported by bootc
+- **Target user:** `zelf` (device specific configuration supplied later)
+- **Partitioning:** Hardened custom layout (documented during host provisioning)
 
 ---
 
-## Common Base (all variants)
+## Common base (all variants)
+
+### Filesystem overlays
+- `files/common/` sets Vim as the default editor, provides a shared tmux profile,
+  disables `tailscaled` by default, and leaves SELinux enforcing.
 
 ### Packages
-- Remove:
-- Add:  
-  - `vim-enhanced`
-  - `tmux` (mouse enabled by default config)
-  - `tailscale`
-  - `firewalld`
-- Swap: `nano-default-editor` `vim-default-editor`
+- Remove: `nano-default-editor`
+- Add: `vim-enhanced`, `vim-default-editor`, `tmux`, `tailscale`, `firewalld`
 - Manage all package changes with `dnf5` during image builds.
 
 ### Services
 - `firewalld` enabled and active
-- `tailscaled` disabled by default (enabled in specific variants if required)
-- Automatic updates: `bootc-fetch-apply-updates.timer` enabled
+- `bootc-fetch-apply-updates.timer` enabled for automatic updates
+- `tailscaled` disabled (variants enable it selectively)
 
 ---
 
-## Variant: Server Base
+## Variant: Server base
 
-### Additional Packages
-- `<server-specific tools>` (to be defined, e.g. podman, fail2ban, monitoring agents)
+### Additional packages
+- `fail2ban`, `podman`, `aide`, `setools-console`
+
+### Filesystem overlays (`files/server/`)
+- Hardened SSH configuration (`sshd_config.d`, service override)
+- Fail2ban jail tuned for SSH
+- Locked down firewalld zone (`bootc-server`) permitting SSH only
+- Kernel/network sysctl defaults tightened for server workloads
 
 ### Services
 - `sshd` enabled
-- Logging + auditing enhancements
-
-### Hardening
-- SELinux enforcing
-- Systemd lockdown configuration (to be detailed)
-- Strict firewall rules
+- `fail2ban` enabled
+- `tailscaled` kept disabled unless the deployment overrides the preset
 
 ---
 
-## Variant: Personal Device Base
+## Variant: Personal device base
 
-### Additional Packages
-- `<desktop or user apps>` (to be defined, e.g. GNOME, browsers, dev tools)
+### Additional packages
+- `flatpak`, `toolbox`, `zsh`, `git`
+
+### Filesystem overlays (`files/personal/`)
+- Personal firewalld defaults for trusted local networks
+- NetworkManager Wi-Fi power save tuning
+- Tailscale service drop-in ensuring startup after networking
 
 ### Services
+- `tailscaled` enabled for connectivity
 - `sshd` disabled by default
-- `tailscaled` enabled for device connectivity
-- Firewall relaxed for local network use
-
-### Hardening
-- SELinux enforcing
-- Device-level encryption hooks (manual setup during install)
 
 ---
 
-## Partition Layout (Hardened)
+## Build and publish flow
 
-> Manual install will enforce hardened scheme.
+### Local helpers
+- `scripts/lint.sh` runs shellcheck, yamllint, and hadolint (using a container
+  fallback when the binary is unavailable).
+- `scripts/test.sh` builds the base image first, then the server and personal
+  variants using the freshly built base (configurable via environment
+  variables like `CONTAINER_TOOL`, `BASE_ALIAS`, and `TEST_IMAGES`).
+
+### GitHub workflows
+- `.github/workflows/ci.yml` triggers on pull requests to `main`, installs
+  tooling, runs the lint script, builds the base image, and then builds the
+  server and personal variants in parallel using the uploaded base artifact.
+- `.github/workflows/release.yml` is a manual `workflow_dispatch` requiring the
+  pull-request number. It builds and pushes the base image first, then runs the
+  server and personal jobs in parallel. When no Containerfile changes are
+  detected the workflow reuses the existing GHCR image tags. Successful runs
+  automatically merge the referenced pull request into `main`.
+
+### Publishing
+- Release builds push commit-SHA and `latest` tags for each image to
+  `ghcr.io/<owner>/bootc-{base,server,personal}`.
+- Local builds can be tagged with the same naming scheme before pushing.
+
+---
+
+## Partition layout (hardened)
+
+> Manual installs will enforce the hardened scheme during host provisioning.
 - `/boot` separate
 - `/var` separate
-- `/home` separate (encrypted recommended)
+- `/home` separate (encryption recommended)
 - `/` minimal
 - `tmpfs` for `/tmp`
 
 ---
 
-## Build and Publish Flow
+## Git commit guidelines
 
-### Build
-```bash
-podman build -t zelf/bootc-base:latest -f Containerfiles/Containerfile.base
-podman build -t zelf/bootc-server:latest -f Containerfiles/Containerfile.server
-podman build -t zelf/bootc-personal:latest -f Containerfiles/Containerfile.personal
-```
-
-### CI expectations
-
-- Pull requests must run the lint (`scripts/lint.sh`) and test (`scripts/test.sh`) scripts via GitHub Actions.
-- Image publishing occurs only from merges to `main` that trigger the release workflow pushing to GHCR.
-
-## Git Commit Guidelines
-
-Follow the “How to Write a Git Commit Message” rules by cbeams.
+Follow the “How to Write a Git Commit Message” rules by Chris Beams.
 
 1. Separate subject from body with a blank line.
 2. Limit subject line to **50 characters**.
 3. Capitalize the subject line.
-4. Do *not* end subject line with a period.  
-5. Use the imperative mood in subject line (e.g. “Add”, “Remove”, “Fix”).  
+4. Do *not* end subject line with a period.
+5. Use the imperative mood in the subject line (e.g. “Add”, “Remove”, “Fix”).
 6. Wrap the body at **72 characters**.
 7. Use the body to explain *what* and *why* instead of *how*.
 
