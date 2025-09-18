@@ -5,14 +5,19 @@ on:
     branches:
       - main
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
-  build-and-push:
+  build-base:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    env:
-      REGISTRY: ghcr.io
+    outputs:
+      owner: ${{ steps.prepare.outputs.owner }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      base_latest: ${{ steps.prepare.outputs.base_latest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,39 +33,112 @@ jobs:
         run: |
           echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push images
-        env:
-          CONTAINER_TOOL: podman
+      - name: Prepare image tags
+        id: prepare
+        run: |
+          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "owner=${OWNER}" >> "${GITHUB_OUTPUT}"
+          echo "base_sha=${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "base_latest=${REGISTRY}/${OWNER}/bootc-base:latest" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push base image
         run: |
           set -euo pipefail
-          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          BASE_LOCAL=localhost/bootc-base:latest
-          SERVER_LOCAL=localhost/bootc-server:latest
-          PERSONAL_LOCAL=localhost/bootc-personal:latest
+          BASE_LOCAL_SHA="localhost/bootc-base:${GITHUB_SHA}"
+          BASE_LOCAL_LATEST="localhost/bootc-base:latest"
+          BASE_REMOTE_SHA="${{ steps.prepare.outputs.base_sha }}"
+          BASE_REMOTE_LATEST="${{ steps.prepare.outputs.base_latest }}"
+          sudo podman build --pull=always --tag "${BASE_LOCAL_SHA}" -f Containerfiles/Containerfile.base .
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_LOCAL_LATEST}"
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_SHA}"
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_LATEST}"
+          sudo podman push "${BASE_REMOTE_SHA}"
+          sudo podman push "${BASE_REMOTE_LATEST}"
 
-          sudo podman build --pull=always --tag "${BASE_LOCAL}" -f Containerfiles/Containerfile.base .
-          sudo podman tag "${BASE_LOCAL}" bootc-base:latest
+  build-server:
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          sudo podman build --build-arg BASE_IMAGE=bootc-base:latest --tag "${SERVER_LOCAL}" -f Containerfiles/Containerfile.server .
-          sudo podman build --build-arg BASE_IMAGE=bootc-base:latest --tag "${PERSONAL_LOCAL}" -f Containerfiles/Containerfile.personal .
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
 
-          BASE_LATEST="${REGISTRY}/${OWNER}/bootc-base:latest"
-          BASE_SHA="${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}"
-          SERVER_LATEST="${REGISTRY}/${OWNER}/bootc-server:latest"
-          SERVER_SHA="${REGISTRY}/${OWNER}/bootc-server:${GITHUB_SHA}"
-          PERSONAL_LATEST="${REGISTRY}/${OWNER}/bootc-personal:latest"
-          PERSONAL_SHA="${REGISTRY}/${OWNER}/bootc-personal:${GITHUB_SHA}"
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
 
-          sudo podman tag "${BASE_LOCAL}" "${BASE_LATEST}"
-          sudo podman tag "${BASE_LOCAL}" "${BASE_SHA}"
-          sudo podman tag "${SERVER_LOCAL}" "${SERVER_LATEST}"
-          sudo podman tag "${SERVER_LOCAL}" "${SERVER_SHA}"
-          sudo podman tag "${PERSONAL_LOCAL}" "${PERSONAL_LATEST}"
-          sudo podman tag "${PERSONAL_LOCAL}" "${PERSONAL_SHA}"
+      - name: Pull base image
+        run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
 
-          sudo podman push "${BASE_LATEST}"
-          sudo podman push "${BASE_SHA}"
-          sudo podman push "${SERVER_LATEST}"
-          sudo podman push "${SERVER_SHA}"
-          sudo podman push "${PERSONAL_LATEST}"
-          sudo podman push "${PERSONAL_SHA}"
+      - name: Build and push server image
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
+          SERVER_LOCAL_SHA="localhost/bootc-server:${GITHUB_SHA}"
+          SERVER_LOCAL_LATEST="localhost/bootc-server:latest"
+          SERVER_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-server:${GITHUB_SHA}"
+          SERVER_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-server:latest"
+          sudo podman build \
+            --build-arg BASE_IMAGE="${BASE_SHA}" \
+            --tag "${SERVER_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.server \
+            .
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_LOCAL_LATEST}"
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_REMOTE_SHA}"
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_REMOTE_LATEST}"
+          sudo podman push "${SERVER_REMOTE_SHA}"
+          sudo podman push "${SERVER_REMOTE_LATEST}"
+
+  build-personal:
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull base image
+        run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
+
+      - name: Build and push personal image
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
+          PERSONAL_LOCAL_SHA="localhost/bootc-personal:${GITHUB_SHA}"
+          PERSONAL_LOCAL_LATEST="localhost/bootc-personal:latest"
+          PERSONAL_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-personal:${GITHUB_SHA}"
+          PERSONAL_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-personal:latest"
+          sudo podman build \
+            --build-arg BASE_IMAGE="${BASE_SHA}" \
+            --tag "${PERSONAL_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.personal \
+            .
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_LOCAL_LATEST}"
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_REMOTE_SHA}"
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_REMOTE_LATEST}"
+          sudo podman push "${PERSONAL_REMOTE_SHA}"
+          sudo podman push "${PERSONAL_REMOTE_LATEST}"

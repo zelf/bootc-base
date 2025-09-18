@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,7 +24,94 @@ jobs:
           CONTAINER_TOOL: podman
         run: sudo -E scripts/lint.sh
 
-      - name: Test builds
+  build-base:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Build base image
         env:
           CONTAINER_TOOL: podman
+          BASE_TAG: localhost/bootc-base:ci
+          BASE_ALIAS: bootc-base:ci
+          TEST_IMAGES: base
+        run: sudo -E scripts/test.sh
+
+      - name: Save base image artifact
+        run: sudo podman save bootc-base:ci -o bootc-base.tar
+
+      - name: Upload base image artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bootc-base-image
+          path: bootc-base.tar
+          if-no-files-found: error
+
+  build-server:
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: bootc-base-image
+
+      - name: Load base image
+        run: sudo podman load -i bootc-base.tar
+
+      - name: Build server image
+        env:
+          CONTAINER_TOOL: podman
+          BASE_ALIAS: bootc-base:ci
+          SERVER_TAG: localhost/bootc-server:ci
+          TEST_IMAGES: server
+        run: sudo -E scripts/test.sh
+
+  build-personal:
+    needs: build-base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: bootc-base-image
+
+      - name: Load base image
+        run: sudo podman load -i bootc-base.tar
+
+      - name: Build personal image
+        env:
+          CONTAINER_TOOL: podman
+          BASE_ALIAS: bootc-base:ci
+          PERSONAL_TAG: localhost/bootc-personal:ci
+          TEST_IMAGES: personal
         run: sudo -E scripts/test.sh
