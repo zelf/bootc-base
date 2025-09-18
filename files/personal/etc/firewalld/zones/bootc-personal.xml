@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="ACCEPT">
+  <short>bootc-personal</short>
+  <description>Personal device zone with LAN-friendly access while blocking unsolicited inbound traffic.</description>
+  <service name="mdns"/>
+  <service name="ipp-client"/>
+  <service name="dhcpv6-client"/>
+  <masquerade>false</masquerade>
+</zone>

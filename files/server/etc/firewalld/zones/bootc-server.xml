@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="DROP">
+  <short>bootc-server</short>
+  <description>Restrictive zone permitting only SSH and essential ICMP.</description>
+  <service name="ssh"/>
+  <service name="dhcpv6-client"/>
+  <icmp-block-inversion>false</icmp-block-inversion>
+  <icmp-block name="echo-request"/>
+</zone>

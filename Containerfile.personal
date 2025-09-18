@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.4
+ARG BASE_IMAGE=localhost/bootc-base:base
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source="https://github.com/zelf/bootc-base" \
+      org.opencontainers.image.description="Personal device variant with desktop-friendly defaults"
+
+COPY files/personal/ /
+
+RUN --mount=type=tmpfs,target=/var/cache/dnf \
+    --mount=type=tmpfs,target=/var/lib/dnf \
+    dnf5 -y install \
+        tlp \
+        powertop \
+        zsh \
+    && dnf5 -y clean all
+
+RUN systemctl enable tailscaled \
+    && systemctl mask sshd
+
+RUN firewall-offline-cmd --set-default-zone=bootc-personal

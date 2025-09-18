@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.4
+ARG BASE_IMAGE=localhost/bootc-base:base
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source="https://github.com/zelf/bootc-base" \
+      org.opencontainers.image.description="Hardened server variant built atop the bootc common base"
+
+COPY files/server/ /
+
+RUN --mount=type=tmpfs,target=/var/cache/dnf \
+    --mount=type=tmpfs,target=/var/lib/dnf \
+    dnf5 -y install \
+        fail2ban \
+        openssh-server \
+        policycoreutils-python-utils \
+        tcpdump \
+    && dnf5 -y clean all
+
+RUN systemctl enable sshd \
+    && systemctl enable fail2ban
+
+RUN firewall-offline-cmd --set-default-zone=bootc-server

@@ -1,0 +1,62 @@
+name: Release Images
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAMESPACE: ${{ github.repository_owner }}
+      BASE_IMAGE_NAME: bootc-base
+      SERVER_IMAGE_NAME: bootc-server
+      PERSONAL_IMAGE_NAME: bootc-personal
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman fuse-overlayfs
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${CR_PAT}" | podman login "${REGISTRY}" --username "${{ github.actor }}" --password-stdin
+
+      - name: Build base image
+        run: |
+          podman build \
+            --pull=always \
+            --tag localhost/${BASE_IMAGE_NAME}:base \
+            --file Containerfile.base \
+            .
+          podman tag localhost/${BASE_IMAGE_NAME}:base ${REGISTRY}/${IMAGE_NAMESPACE}/${BASE_IMAGE_NAME}:latest
+          podman tag localhost/${BASE_IMAGE_NAME}:base ${REGISTRY}/${IMAGE_NAMESPACE}/${BASE_IMAGE_NAME}:base
+          podman push ${REGISTRY}/${IMAGE_NAMESPACE}/${BASE_IMAGE_NAME}:latest
+          podman push ${REGISTRY}/${IMAGE_NAMESPACE}/${BASE_IMAGE_NAME}:base
+
+      - name: Build and push server image
+        run: |
+          podman build \
+            --tag localhost/${SERVER_IMAGE_NAME}:latest \
+            --file Containerfile.server \
+            --build-arg BASE_IMAGE=localhost/${BASE_IMAGE_NAME}:base \
+            .
+          podman tag localhost/${SERVER_IMAGE_NAME}:latest ${REGISTRY}/${IMAGE_NAMESPACE}/${SERVER_IMAGE_NAME}:latest
+          podman push ${REGISTRY}/${IMAGE_NAMESPACE}/${SERVER_IMAGE_NAME}:latest
+
+      - name: Build and push personal image
+        run: |
+          podman build \
+            --tag localhost/${PERSONAL_IMAGE_NAME}:latest \
+            --file Containerfile.personal \
+            --build-arg BASE_IMAGE=localhost/${BASE_IMAGE_NAME}:base \
+            .
+          podman tag localhost/${PERSONAL_IMAGE_NAME}:latest ${REGISTRY}/${IMAGE_NAMESPACE}/${PERSONAL_IMAGE_NAME}:latest
+          podman push ${REGISTRY}/${IMAGE_NAMESPACE}/${PERSONAL_IMAGE_NAME}:latest

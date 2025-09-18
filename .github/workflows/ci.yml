@@ -6,11 +6,19 @@ on:
       - main
 
 jobs:
-  actionlint:
-    name: Check workflows
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Run actionlint
-        uses: rhysd/actionlint@v1.6.27
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman fuse-overlayfs
+
+      - name: Run lint
+        run: sudo bash scripts/lint.sh
+
+      - name: Run test builds
+        run: sudo bash scripts/test.sh
