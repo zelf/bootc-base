@@ -65,8 +65,11 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
-            -u "${{ github.actor }}" --password-stdin
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
 
       - name: Prepare image tags
         id: prepare
@@ -133,23 +136,32 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
-            -u "${{ github.actor }}" --password-stdin
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
 
       - name: Pull base image
-        if: needs.changes.outputs.base == 'true' || needs.changes.outputs.server == 'true'
-        run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.server == 'true'
+        run: |
+          sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
 
       - name: Build and push server image
-        if: needs.changes.outputs.base == 'true' || needs.changes.outputs.server == 'true'
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.server == 'true'
         run: |
           set -euo pipefail
           OWNER="${{ needs.build-base.outputs.owner }}"
           BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
           SERVER_LOCAL_SHA="localhost/bootc-server:${GITHUB_SHA}"
           SERVER_LOCAL_LATEST="localhost/bootc-server:latest"
-          SERVER_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-server:${GITHUB_SHA}"
-          SERVER_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-server:latest"
+          SERVER_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-server"
+          SERVER_REMOTE_SHA="${SERVER_REMOTE_BASE}:${GITHUB_SHA}"
+          SERVER_REMOTE_LATEST="${SERVER_REMOTE_BASE}:latest"
           sudo podman build \
             --build-arg BASE_IMAGE="${BASE_SHA}" \
             --tag "${SERVER_LOCAL_SHA}" \
@@ -162,12 +174,15 @@ jobs:
           sudo podman push "${SERVER_REMOTE_LATEST}"
 
       - name: Reuse existing server image
-        if: needs.changes.outputs.base != 'true' && needs.changes.outputs.server != 'true'
+        if: >-
+          needs.changes.outputs.base != 'true' &&
+          needs.changes.outputs.server != 'true'
         run: |
           set -euo pipefail
           OWNER="${{ needs.build-base.outputs.owner }}"
-          SERVER_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-server:${GITHUB_SHA}"
-          SERVER_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-server:latest"
+          SERVER_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-server"
+          SERVER_REMOTE_SHA="${SERVER_REMOTE_BASE}:${GITHUB_SHA}"
+          SERVER_REMOTE_LATEST="${SERVER_REMOTE_BASE}:latest"
           sudo podman pull "${SERVER_REMOTE_LATEST}"
           sudo podman tag "${SERVER_REMOTE_LATEST}" "${SERVER_REMOTE_SHA}"
           sudo podman push "${SERVER_REMOTE_SHA}"
@@ -193,23 +208,32 @@ jobs:
         env:
           CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${CR_PAT}" | sudo podman login "${REGISTRY}" \
-            -u "${{ github.actor }}" --password-stdin
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
 
       - name: Pull base image
-        if: needs.changes.outputs.base == 'true' || needs.changes.outputs.personal == 'true'
-        run: sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.personal == 'true'
+        run: |
+          sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
 
       - name: Build and push personal image
-        if: needs.changes.outputs.base == 'true' || needs.changes.outputs.personal == 'true'
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.personal == 'true'
         run: |
           set -euo pipefail
           OWNER="${{ needs.build-base.outputs.owner }}"
           BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
           PERSONAL_LOCAL_SHA="localhost/bootc-personal:${GITHUB_SHA}"
           PERSONAL_LOCAL_LATEST="localhost/bootc-personal:latest"
-          PERSONAL_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-personal:${GITHUB_SHA}"
-          PERSONAL_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-personal:latest"
+          PERSONAL_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-personal"
+          PERSONAL_REMOTE_SHA="${PERSONAL_REMOTE_BASE}:${GITHUB_SHA}"
+          PERSONAL_REMOTE_LATEST="${PERSONAL_REMOTE_BASE}:latest"
           sudo podman build \
             --build-arg BASE_IMAGE="${BASE_SHA}" \
             --tag "${PERSONAL_LOCAL_SHA}" \
@@ -222,12 +246,15 @@ jobs:
           sudo podman push "${PERSONAL_REMOTE_LATEST}"
 
       - name: Reuse existing personal image
-        if: needs.changes.outputs.base != 'true' && needs.changes.outputs.personal != 'true'
+        if: >-
+          needs.changes.outputs.base != 'true' &&
+          needs.changes.outputs.personal != 'true'
         run: |
           set -euo pipefail
           OWNER="${{ needs.build-base.outputs.owner }}"
-          PERSONAL_REMOTE_SHA="${REGISTRY}/${OWNER}/bootc-personal:${GITHUB_SHA}"
-          PERSONAL_REMOTE_LATEST="${REGISTRY}/${OWNER}/bootc-personal:latest"
+          PERSONAL_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-personal"
+          PERSONAL_REMOTE_SHA="${PERSONAL_REMOTE_BASE}:${GITHUB_SHA}"
+          PERSONAL_REMOTE_LATEST="${PERSONAL_REMOTE_BASE}:latest"
           sudo podman pull "${PERSONAL_REMOTE_LATEST}"
           sudo podman tag "${PERSONAL_REMOTE_LATEST}" "${PERSONAL_REMOTE_SHA}"
           sudo podman push "${PERSONAL_REMOTE_SHA}"
@@ -251,40 +278,59 @@ jobs:
           script: |
             const prInput = context.payload.inputs['pr-number'];
             const prNumber = Number.parseInt(prInput, 10);
+
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed(`Invalid pull request number provided: '${prInput}'.`);
+              const invalidNumberMessage =
+                `Invalid pull request number provided: '${prInput}'.`;
+              core.setFailed(invalidNumberMessage);
               return;
             }
+
             const prResponse = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber,
             });
             const pr = prResponse.data;
+
             if (pr.state !== 'open') {
-              core.setFailed(`Pull request #${prNumber} is not open (state: ${pr.state}).`);
+              const notOpenMessage =
+                `Pull request #${prNumber} is not open (state: ${pr.state}).`;
+              core.setFailed(notOpenMessage);
               return;
             }
+
             if (pr.draft) {
               core.setFailed(`Pull request #${prNumber} is marked as draft.`);
               return;
             }
+
             if (pr.base.ref !== 'main') {
-              core.setFailed(`Pull request #${prNumber} targets '${pr.base.ref}' instead of 'main'.`);
+              const wrongBaseMessage =
+                `Pull request #${prNumber} targets '${pr.base.ref}' ` +
+                "instead of 'main'.";
+              core.setFailed(wrongBaseMessage);
               return;
             }
-            if (pr.head.sha !== process.env.GITHUB_SHA) {
-              core.setFailed(
-                `Pull request head SHA ${pr.head.sha} does not match workflow commit ${process.env.GITHUB_SHA}.`
-              );
+
+            const workflowSha = process.env.GITHUB_SHA;
+            if (pr.head.sha !== workflowSha) {
+              const shaMismatchMessage =
+                `Pull request head SHA ${pr.head.sha} does not match ` +
+                `workflow commit ${workflowSha}.`;
+              core.setFailed(shaMismatchMessage);
               return;
             }
+
             if (pr.mergeable === false || pr.mergeable_state !== 'clean') {
-              core.setFailed(
-                `Pull request #${prNumber} is not mergeable (state: ${pr.mergeable_state ?? 'unknown'}).`
-              );
+              const mergeableState = pr.mergeable_state ?? 'unknown';
+              const notMergeableMessage =
+                `Pull request #${prNumber} is not mergeable (state: ` +
+                `${mergeableState}).`;
+              core.setFailed(notMergeableMessage);
               return;
             }
+
             await github.rest.pulls.merge({
               owner: context.repo.owner,
               repo: context.repo.repo,
