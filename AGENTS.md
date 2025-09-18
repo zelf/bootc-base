@@ -81,3 +81,27 @@
 podman build -t <registry>/<namespace>/bootc:base -f Containerfile.base
 podman build -t <registry>/<namespace>/bootc:server -f Containerfile.server
 podman build -t <registry>/<namespace>/bootc:personal -f Containerfile.personal
+```
+
+## Git Commit Guidelines
+
+Follow the “How to Write a Git Commit Message” rules by cbeams.
+
+1. Separate subject from body with a blank line.
+2. Limit subject line to **50 characters**.
+3. Capitalize the subject line.
+4. Do *not* end subject line with a period.  
+5. Use the imperative mood in subject line (e.g. “Add”, “Remove”, “Fix”).  
+6. Wrap the body at **72 characters**.
+7. Use the body to explain *what* and *why* instead of *how*.
+
+### Template suggestion
+
+```text
+<Subject (Imperative, ≤50 chars, Capitalized, no period)>
+
+<Body: explain what and why. Wrap at 72 chars. May include
+- Side effects
+- Dependencies
+- Issue/ticket IDs (if used)
+```
