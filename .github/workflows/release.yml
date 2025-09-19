@@ -1,0 +1,479 @@
+---
+name: Release images
+
+'on':
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Pull request number to merge after a successful release run
+        required: false
+        type: string
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    outputs:
+      event-name: ${{ steps.info.outputs.event_name }}
+      pr-number: ${{ steps.resolve.outputs.pr_number }}
+    steps:
+      - name: Capture event details
+        id: info
+        run: echo "event_name=${GITHUB_EVENT_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve pull request number
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const eventName = context.eventName;
+            let prNumber;
+
+            if (eventName === 'pull_request_target') {
+              prNumber = context.payload.pull_request?.number;
+            } else if (eventName === 'workflow_dispatch') {
+              const manualInput =
+                context.payload?.inputs?.['pr-number']?.trim();
+
+              if (manualInput) {
+                const parsed = Number.parseInt(manualInput, 10);
+                if (!Number.isInteger(parsed) || parsed <= 0) {
+                  core.setFailed(
+                    `Invalid pr-number input provided: '${manualInput}'.`,
+                  );
+                  return;
+                }
+                prNumber = parsed;
+              } else {
+                const ref = context.ref ?? '';
+                const branchPrefix = 'refs/heads/';
+                const manualHint = [
+                  'Provide pr-number manually when dispatching the',
+                  'workflow.',
+                ].join(' ');
+
+                if (!ref.startsWith(branchPrefix)) {
+                  core.setFailed(
+                    `Unable to detect branch from ref '${ref}'. ${manualHint}`,
+                  );
+                  return;
+                }
+
+                const branch = ref.slice(branchPrefix.length);
+                const prs = await github.paginate(
+                  github.rest.pulls.list,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    head: `${context.repo.owner}:${branch}`,
+                    state: 'open',
+                  },
+                );
+
+                if (prs.length === 1) {
+                  prNumber = prs[0].number;
+                } else if (prs.length === 0) {
+                  core.setFailed(
+                    `No open pull requests found for branch '${branch}'. ` +
+                      `${manualHint}`,
+                  );
+                  return;
+                } else {
+                  const prNumbers = prs.map((pr) => `#${pr.number}`).join(', ');
+                  core.setFailed(
+                    `Multiple open pull requests (${prNumbers}) found for ` +
+                      `branch '${branch}'. ${manualHint}`,
+                  );
+                  return;
+                }
+              }
+            } else {
+              core.setFailed(
+                `Unsupported event '${eventName}' for this workflow.`,
+              );
+              return;
+            }
+
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(
+                'Unable to determine a valid pull request number.',
+              );
+              return;
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+
+      - name: Provide release instructions
+        if: steps.info.outputs.event_name != 'workflow_dispatch'
+        run: |
+          {
+            echo "Release workflow triggered for pull request checks."
+            echo "Run the manual dispatch to build images and merge the PR."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  changes:
+    needs: context
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.filter.outputs.base }}
+      server: ${{ steps.filter.outputs.server }}
+      personal: ${{ steps.filter.outputs.personal }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect image changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          base: main
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          filters: |
+            base:
+              - 'Containerfiles/Containerfile.base'
+              - 'files/common/**'
+            server:
+              - 'Containerfiles/Containerfile.server'
+              - 'files/server/**'
+            personal:
+              - 'Containerfiles/Containerfile.personal'
+              - 'files/personal/**'
+
+  build-base:
+    needs:
+      - context
+      - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      owner: ${{ steps.prepare.outputs.owner }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      base_latest: ${{ steps.prepare.outputs.base_latest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Prepare image tags
+        id: prepare
+        run: |
+          OWNER_INPUT="${GITHUB_REPOSITORY_OWNER}"
+          OWNER="$(
+            echo "${OWNER_INPUT}" | tr '[:upper:]' '[:lower:]'
+          )"
+          BASE_SHA="${REGISTRY}/${OWNER}/bootc-base:${GITHUB_SHA}"
+          BASE_LATEST="${REGISTRY}/${OWNER}/bootc-base:latest"
+          {
+            echo "owner=${OWNER}"
+            echo "base_sha=${BASE_SHA}"
+            echo "base_latest=${BASE_LATEST}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push base image
+        if: needs.changes.outputs.base == 'true'
+        run: |
+          set -euo pipefail
+          BASE_LOCAL_SHA="localhost/bootc-base:${GITHUB_SHA}"
+          BASE_LOCAL_LATEST="localhost/bootc-base:latest"
+          BASE_REMOTE_SHA="${{ steps.prepare.outputs.base_sha }}"
+          BASE_REMOTE_LATEST="${{ steps.prepare.outputs.base_latest }}"
+          sudo podman build \
+            --pull=always \
+            --tag "${BASE_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.base \
+            .
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_LOCAL_LATEST}"
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_SHA}"
+          sudo podman tag "${BASE_LOCAL_SHA}" "${BASE_REMOTE_LATEST}"
+          sudo podman push "${BASE_REMOTE_SHA}"
+          sudo podman push "${BASE_REMOTE_LATEST}"
+
+      - name: Reuse existing base image
+        if: needs.changes.outputs.base != 'true'
+        run: |
+          set -euo pipefail
+          BASE_REMOTE_SHA="${{ steps.prepare.outputs.base_sha }}"
+          BASE_REMOTE_LATEST="${{ steps.prepare.outputs.base_latest }}"
+          sudo podman pull "${BASE_REMOTE_LATEST}"
+          sudo podman tag "${BASE_REMOTE_LATEST}" "${BASE_REMOTE_SHA}"
+          sudo podman push "${BASE_REMOTE_SHA}"
+
+  build-server:
+    needs:
+      - context
+      - build-base
+      - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Pull base image
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.server == 'true'
+        run: |
+          sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
+
+      - name: Build and push server image
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.server == 'true'
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
+          SERVER_LOCAL_SHA="localhost/bootc-server:${GITHUB_SHA}"
+          SERVER_LOCAL_LATEST="localhost/bootc-server:latest"
+          SERVER_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-server"
+          SERVER_REMOTE_SHA="${SERVER_REMOTE_BASE}:${GITHUB_SHA}"
+          SERVER_REMOTE_LATEST="${SERVER_REMOTE_BASE}:latest"
+          sudo podman build \
+            --build-arg BASE_IMAGE="${BASE_SHA}" \
+            --tag "${SERVER_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.server \
+            .
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_LOCAL_LATEST}"
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_REMOTE_SHA}"
+          sudo podman tag "${SERVER_LOCAL_SHA}" "${SERVER_REMOTE_LATEST}"
+          sudo podman push "${SERVER_REMOTE_SHA}"
+          sudo podman push "${SERVER_REMOTE_LATEST}"
+
+      - name: Reuse existing server image
+        if: >-
+          needs.changes.outputs.base != 'true' &&
+          needs.changes.outputs.server != 'true'
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          SERVER_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-server"
+          SERVER_REMOTE_SHA="${SERVER_REMOTE_BASE}:${GITHUB_SHA}"
+          SERVER_REMOTE_LATEST="${SERVER_REMOTE_BASE}:latest"
+          sudo podman pull "${SERVER_REMOTE_LATEST}"
+          sudo podman tag "${SERVER_REMOTE_LATEST}" "${SERVER_REMOTE_SHA}"
+          sudo podman push "${SERVER_REMOTE_SHA}"
+
+  build-personal:
+    needs:
+      - context
+      - build-base
+      - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Log in to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${CR_PAT}" | sudo podman login \
+            "${REGISTRY}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Pull base image
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.personal == 'true'
+        run: |
+          sudo podman pull "${{ needs.build-base.outputs.base_sha }}"
+
+      - name: Build and push personal image
+        if: >-
+          needs.changes.outputs.base == 'true' ||
+          needs.changes.outputs.personal == 'true'
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          BASE_SHA="${{ needs.build-base.outputs.base_sha }}"
+          PERSONAL_LOCAL_SHA="localhost/bootc-personal:${GITHUB_SHA}"
+          PERSONAL_LOCAL_LATEST="localhost/bootc-personal:latest"
+          PERSONAL_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-personal"
+          PERSONAL_REMOTE_SHA="${PERSONAL_REMOTE_BASE}:${GITHUB_SHA}"
+          PERSONAL_REMOTE_LATEST="${PERSONAL_REMOTE_BASE}:latest"
+          sudo podman build \
+            --build-arg BASE_IMAGE="${BASE_SHA}" \
+            --tag "${PERSONAL_LOCAL_SHA}" \
+            -f Containerfiles/Containerfile.personal \
+            .
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_LOCAL_LATEST}"
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_REMOTE_SHA}"
+          sudo podman tag "${PERSONAL_LOCAL_SHA}" "${PERSONAL_REMOTE_LATEST}"
+          sudo podman push "${PERSONAL_REMOTE_SHA}"
+          sudo podman push "${PERSONAL_REMOTE_LATEST}"
+
+      - name: Reuse existing personal image
+        if: >-
+          needs.changes.outputs.base != 'true' &&
+          needs.changes.outputs.personal != 'true'
+        run: |
+          set -euo pipefail
+          OWNER="${{ needs.build-base.outputs.owner }}"
+          PERSONAL_REMOTE_BASE="${REGISTRY}/${OWNER}/bootc-personal"
+          PERSONAL_REMOTE_SHA="${PERSONAL_REMOTE_BASE}:${GITHUB_SHA}"
+          PERSONAL_REMOTE_LATEST="${PERSONAL_REMOTE_BASE}:latest"
+          sudo podman pull "${PERSONAL_REMOTE_LATEST}"
+          sudo podman tag "${PERSONAL_REMOTE_LATEST}" "${PERSONAL_REMOTE_SHA}"
+          sudo podman push "${PERSONAL_REMOTE_SHA}"
+
+  merge-pr:
+    needs:
+      - context
+      - build-base
+      - build-server
+      - build-personal
+      - changes
+    if: needs.context.outputs.event-name == 'workflow_dispatch' && success()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ needs.context.outputs['pr-number'] }}
+    steps:
+      - name: Merge pull request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const eventName = context.eventName;
+            let prNumber;
+
+            if (eventName === 'pull_request_target') {
+              prNumber = context.payload.pull_request?.number;
+            } else if (eventName === 'workflow_dispatch') {
+              const envValue = process.env.PR_NUMBER ?? '';
+              const trimmedValue = envValue.trim();
+
+              if (!trimmedValue) {
+                core.setFailed('Pull request number is not available.');
+                return;
+              }
+
+              const parsed = Number.parseInt(trimmedValue, 10);
+              if (!Number.isInteger(parsed) || parsed <= 0) {
+                core.setFailed(
+                  `Invalid pull request number provided: '${trimmedValue}'.`,
+                );
+                return;
+              }
+
+              prNumber = parsed;
+            } else {
+              core.setFailed(`Unsupported event '${eventName}'.`);
+              return;
+            }
+
+            const prResponse = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const pr = prResponse.data;
+
+            if (pr.state !== 'open') {
+              const notOpenMessage =
+                `Pull request #${prNumber} is not open (state: ${pr.state}).`;
+              core.setFailed(notOpenMessage);
+              return;
+            }
+
+            if (pr.draft) {
+              core.setFailed(`Pull request #${prNumber} is marked as draft.`);
+              return;
+            }
+
+            if (pr.base.ref !== 'main') {
+              const wrongBaseMessage =
+                `Pull request #${prNumber} targets '${pr.base.ref}' ` +
+                "instead of 'main'.";
+              core.setFailed(wrongBaseMessage);
+              return;
+            }
+
+            const workflowSha = process.env.GITHUB_SHA;
+            if (pr.head.sha !== workflowSha) {
+              const shaMismatchMessage =
+                `Pull request head SHA ${pr.head.sha} does not match ` +
+                `workflow commit ${workflowSha}.`;
+              core.setFailed(shaMismatchMessage);
+              return;
+            }
+
+            if (pr.mergeable === false || pr.mergeable_state !== 'clean') {
+              const mergeableState = pr.mergeable_state ?? 'unknown';
+              const notMergeableMessage =
+                `Pull request #${prNumber} is not mergeable (state: ` +
+                `${mergeableState}).`;
+              core.setFailed(notMergeableMessage);
+              return;
+            }
+
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'merge',
+            });
+            core.info(`Pull request #${prNumber} merged successfully.`);

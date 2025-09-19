@@ -1,0 +1,4 @@
+# Preset configuration for bootc base images
+disable tailscaled.service
+enable firewalld.service
+enable bootc-fetch-apply-updates.timer

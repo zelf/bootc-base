@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1.6
+FROM quay.io/fedora/fedora-bootc:42
+
+LABEL org.opencontainers.image.title="bootc-base"
+LABEL org.opencontainers.image.description="Common hardened base for zelf bootc images"
+
+ENV EDITOR=vim \
+    VISUAL=vim
+
+COPY files/common/ /
+
+RUN --mount=type=tmpfs,target=/var/cache/dnf \
+    --mount=type=tmpfs,target=/var/tmp \
+    (dnf5 -y remove nano-default-editor || true) \
+    && dnf5 -y install \
+        vim-enhanced \
+        vim-default-editor \
+        tmux \
+        tailscale \
+        firewalld \
+    && dnf5 clean all
+
+RUN set -eu; \
+    systemctl enable firewalld; \
+    systemctl enable bootc-fetch-apply-updates.timer; \
+    systemctl disable tailscaled || true
+
+# Keep SELinux enforcing unless explicitly changed downstream.

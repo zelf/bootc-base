@@ -1,0 +1,173 @@
+---
+name: CI
+
+'on':
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.filter.outputs.base }}
+      server: ${{ steps.filter.outputs.server }}
+      personal: ${{ steps.filter.outputs.personal }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect image changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            base:
+              - 'Containerfiles/Containerfile.base'
+              - 'files/common/**'
+            server:
+              - 'Containerfiles/Containerfile.server'
+              - 'files/server/**'
+            personal:
+              - 'Containerfiles/Containerfile.personal'
+              - 'files/personal/**'
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman shellcheck yamllint uidmap
+
+      - name: Lint
+        env:
+          CONTAINER_TOOL: podman
+        run: sudo -E scripts/lint.sh
+
+  build-base:
+    needs:
+      - lint
+      - changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Restore base image cache
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: bootc-base.tar
+          key: >-
+            ${{ runner.os }}-bootc-base-${{
+              hashFiles(
+                'Containerfiles/Containerfile.base',
+                'files/common/**',
+                'scripts/test.sh'
+              )
+            }}
+
+      - name: Build base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        env:
+          CONTAINER_TOOL: podman
+          BASE_TAG: localhost/bootc-base:ci
+          BASE_ALIAS: bootc-base:ci
+          TEST_IMAGES: base
+        run: sudo -E scripts/test.sh
+
+      - name: Save base image artifact
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: sudo podman save bootc-base:ci -o bootc-base.tar
+
+      - name: Upload base image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootc-base-image
+          path: bootc-base.tar
+          if-no-files-found: error
+
+  build-server:
+    needs:
+      - build-base
+      - changes
+    if: >-
+      needs.changes.outputs.base == 'true' ||
+      needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bootc-base-image
+          path: .
+
+      - name: Load base image
+        run: sudo podman load -i bootc-base.tar
+
+      - name: Build server image
+        env:
+          CONTAINER_TOOL: podman
+          BASE_ALIAS: bootc-base:ci
+          SERVER_TAG: localhost/bootc-server:ci
+          TEST_IMAGES: server
+        run: sudo -E scripts/test.sh
+
+  build-personal:
+    needs:
+      - build-base
+      - changes
+    if: >-
+      needs.changes.outputs.base == 'true' ||
+      needs.changes.outputs.personal == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bootc-base-image
+          path: .
+
+      - name: Load base image
+        run: sudo podman load -i bootc-base.tar
+
+      - name: Build personal image
+        env:
+          CONTAINER_TOOL: podman
+          BASE_ALIAS: bootc-base:ci
+          PERSONAL_TAG: localhost/bootc-personal:ci
+          TEST_IMAGES: personal
+        run: sudo -E scripts/test.sh

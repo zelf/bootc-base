@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.6
+ARG BASE_IMAGE=bootc-base:latest
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="bootc-server"
+LABEL org.opencontainers.image.description="Hardened server variant derived from the zelf bootc base"
+
+COPY files/server/ /
+
+RUN --mount=type=tmpfs,target=/var/cache/dnf \
+    --mount=type=tmpfs,target=/var/tmp \
+    dnf5 -y install \
+        fail2ban \
+        podman \
+        aide \
+        setools-console \
+    && dnf5 clean all
+
+RUN set -eu; \
+    systemctl enable sshd; \
+    systemctl enable fail2ban; \
+    systemctl disable tailscaled || true
+
+# Firewalld is configured in files/server firewalld zone presets.
