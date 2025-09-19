@@ -43,7 +43,8 @@ jobs:
             if (eventName === 'pull_request_target') {
               prNumber = context.payload.pull_request?.number;
             } else if (eventName === 'workflow_dispatch') {
-              const manualInput = context.payload?.inputs?.['pr-number']?.trim();
+              const manualInput =
+                context.payload?.inputs?.['pr-number']?.trim();
 
               if (manualInput) {
                 const parsed = Number.parseInt(manualInput, 10);
@@ -57,11 +58,14 @@ jobs:
               } else {
                 const ref = context.ref ?? '';
                 const branchPrefix = 'refs/heads/';
+                const manualHint = [
+                  'Provide pr-number manually when dispatching the',
+                  'workflow.',
+                ].join(' ');
 
                 if (!ref.startsWith(branchPrefix)) {
                   core.setFailed(
-                    `Unable to detect branch from ref '${ref}'. ` +
-                      'Provide pr-number manually when dispatching the workflow.',
+                    `Unable to detect branch from ref '${ref}'. ${manualHint}`,
                   );
                   return;
                 }
@@ -82,26 +86,29 @@ jobs:
                 } else if (prs.length === 0) {
                   core.setFailed(
                     `No open pull requests found for branch '${branch}'. ` +
-                      'Provide pr-number manually when dispatching the workflow.',
+                      `${manualHint}`,
                   );
                   return;
                 } else {
                   const prNumbers = prs.map((pr) => `#${pr.number}`).join(', ');
                   core.setFailed(
-                    `Multiple open pull requests (${prNumbers}) found for branch ` +
-                      `'${branch}'. Provide pr-number manually when ` +
-                      'dispatching the workflow.',
+                    `Multiple open pull requests (${prNumbers}) found for ` +
+                      `branch '${branch}'. ${manualHint}`,
                   );
                   return;
                 }
               }
             } else {
-              core.setFailed(`Unsupported event '${eventName}' for this workflow.`);
+              core.setFailed(
+                `Unsupported event '${eventName}' for this workflow.`,
+              );
               return;
             }
 
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed('Unable to determine a valid pull request number.');
+              core.setFailed(
+                'Unable to determine a valid pull request number.',
+              );
               return;
             }
 
